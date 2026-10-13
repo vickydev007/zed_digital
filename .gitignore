@@ -1,0 +1,34 @@
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Model checkpoints & data
+experiments/
+data/
+*.pth
+*.pt
+*.onnx
+*.ort
+
+# Compiled C++
+openset_reid/cpp/build/
+openset_reid/cpp/*.exe
+openset_reid/cpp/*.obj
+openset_reid/cpp/*.lib
+openset_reid/cpp/*.exp
+*.obj
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.code-workspace
