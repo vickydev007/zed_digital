@@ -1,103 +1,55 @@
-"""
-Quick Demo: Shows open-set matching in action with synthetic embeddings.
-Demonstrates the full pipeline without needing a trained model checkpoint.
-"""
 import sys
-sys.path.insert(0, "d:/zed digital")
-
 import numpy as np
 import torch
 from openset_reid.models.openset_model import create_openset_model
-from openset_reid.open_set.calibrator import OpenSetMatcher, ConfidenceCalibrator
-from openset_reid.open_set.evt_calibration import EVTTailCalibrator
-
-print("=" * 70)
-print("OPEN-SET RE-ID DEMO  —  Security Uniform Scenario")
-print("=" * 70)
-
-# ── Setup model ──────────────────────────────────────────────────────────────
+from openset_reid.open_set.calibrator import OpenSetMatcher
+print('=' * 68)
+print('  Open-Set Person Re-Identification Demo (Access Gate Protocol)')
+print('=' * 68)
 model = create_openset_model(dual_granularity=True, embedding_dim=512)
 model.eval()
-print(f"\nModel: {sum(p.numel() for p in model.parameters())/1e6:.2f}M parameters")
-
-# ── Simulate enrolled gallery of 5 security officers ─────────────────────────
-rng = np.random.RandomState(0)
-D = 512
-
-# Each enrolled person has a "true" embedding (simulating trained model output)
+print(f'Model backbone initialized: {sum((p.numel() for p in model.parameters())) / 1000000.0:.2f}M parameters')
+rng = np.random.RandomState(42)
+embedding_dim = 512
+enrolled_names = ['Officer Alice', 'Officer Bob', 'Officer Charlie', 'Officer Diana', 'Officer Eve']
 enrolled_embeddings = {}
-enrolled_names = ["Officer Alice", "Officer Bob", "Officer Charlie",
-                  "Officer Diana", "Officer Eve"]
 for name in enrolled_names:
-    emb = rng.randn(D).astype(np.float32)
-    emb /= np.linalg.norm(emb)
-    enrolled_embeddings[name] = emb
-
-# Setup matcher
-matcher = OpenSetMatcher(
-    score_threshold=0.45,   # Lowered for untrained embedding demo (trained model: 0.65)
-    margin_threshold=0.05,
-    evt_threshold=0.35,
-    use_cohort=False,
-    use_evt=True
-)
-
-# Enroll gallery
+    vector = rng.randn(embedding_dim).astype(np.float32)
+    vector /= np.linalg.norm(vector)
+    enrolled_embeddings[name] = vector
+matcher = OpenSetMatcher(score_threshold=0.45, contrast_margin=0.05, evt_threshold=0.35, use_cohort=False, use_evt=True)
 for name, emb in enrolled_embeddings.items():
     matcher.enroll(name, emb)
+background_distances = np.clip(rng.normal(1.35, 0.12, 500), 0.6, 1.9)
+matcher.fit_evt_from_distances(background_distances)
+print(f'Enrolled {len(enrolled_names)} authorized officers into local gallery matrix.')
+print('-' * 68)
 
-# Fit EVT on realistic impostor distances (random embeddings are ~sqrt(2) apart)
-imp_dists = np.clip(rng.normal(1.35, 0.12, 500), 0.6, 1.9)
-matcher.fit_evt_from_distances(imp_dists)
-
-print(f"\nGallery enrolled: {len(enrolled_names)} officers")
-print("\n" + "─" * 70)
-
-# ── Test Scenarios ────────────────────────────────────────────────────────────
-def query(name: str, query_emb: np.ndarray, label: str):
-    dec = matcher.match(query_emb)
-    status = "ACCEPT" if dec.is_accepted else "REJECT"
-    sym    = "[+]" if dec.is_accepted else "[-]"
-    print(f"\n  {sym} {label}")
-    print(f"     Query identity:  {name}")
-    print(f"     Decision:        {status}")
-    if dec.is_accepted:
-        print(f"     Matched to:      {dec.matched_identity}")
-    else:
-        print(f"     Rejection:       {dec.rejection_reason}")
-    print(f"     Top score:       {dec.raw_score:.4f} | Margin: {dec.contrast_margin:.4f} | "
-          f"Confidence: {dec.confidence:.4f} | EVT: {dec.evt_tail_score:.4f}")
-    return dec
-
-# Scenario 1: Genuine probe — Alice comes back to camera
-print("\n[SCENARIO 1] Genuine Enrolled Probes")
-alice_probe = enrolled_embeddings["Officer Alice"] + rng.randn(D).astype(np.float32) * 0.08
-alice_probe /= np.linalg.norm(alice_probe)
-query("Officer Alice", alice_probe, "Alice returning to camera (close match)")
-
-bob_probe = enrolled_embeddings["Officer Bob"] + rng.randn(D).astype(np.float32) * 0.12
-bob_probe /= np.linalg.norm(bob_probe)
-query("Officer Bob", bob_probe, "Bob from different camera angle")
-
-# Scenario 2: Unknown impostor in same navy uniform
-print("\n[SCENARIO 2] Unknown Impostors (same navy uniform)")
-for i, impostor_name in enumerate(["Unknown_Guard_07", "Unknown_Guard_12"]):
-    impostor_emb = rng.randn(D).astype(np.float32)
-    impostor_emb /= np.linalg.norm(impostor_emb)
-    query(impostor_name, impostor_emb, f"Unenrolled guard in same uniform (impostor {i+1})")
-
-# Scenario 3: Ambiguous / near-twin case — very similar to Charlie but not quite
-print("\n[SCENARIO 3] Ambiguous Near-Twin (uniform similarity)")
-# Person who looks almost identical to Charlie AND Diana simultaneously
-charlie = enrolled_embeddings["Officer Charlie"]
-diana   = enrolled_embeddings["Officer Diana"]
-near_twin = 0.48 * charlie + 0.48 * diana + 0.04 * rng.randn(D).astype(np.float32)
-near_twin /= np.linalg.norm(near_twin)
-query("UNKNOWN (similar to Charlie+Diana)", near_twin,
-      "Near-twin impostor (ambiguous same-uniform match)")
-
-print("\n" + "─" * 70)
-print("\nGallery summary:")
-print(f"  Enrolled: {matcher.gallery_matrix.shape[0]} officers")
-print(f"  Embedding dimension: {matcher.gallery_matrix.shape[1]}-d")
-print("\nDemo complete.")
+def evaluate_query(name: str, query_vector: np.ndarray, scenario_note: str):
+    decision = matcher.match(query_vector)
+    tag = '[ACCEPT]' if decision.is_accepted else '[REJECT]'
+    print(f'\n  {tag} {scenario_note}')
+    print(f'    Identity:   {name}')
+    print(f"    Result:     {('Verified as ' + str(decision.matched_identity) if decision.is_accepted else 'Blocked: ' + str(decision.rejection_reason))}")
+    print(f'    Score:      {decision.raw_score:.3f} | Margin: {decision.contrast_margin:.3f} | Confidence: {decision.confidence * 100:.1f}%')
+    return decision
+print('\n[Scenario 1: Authorized Personnel Return]')
+alice_vector = enrolled_embeddings['Officer Alice'] + rng.randn(embedding_dim).astype(np.float32) * 0.08
+alice_vector /= np.linalg.norm(alice_vector)
+evaluate_query('Officer Alice', alice_vector, 'Alice passing checkpoint (direct match)')
+bob_vector = enrolled_embeddings['Officer Bob'] + rng.randn(embedding_dim).astype(np.float32) * 0.11
+bob_vector /= np.linalg.norm(bob_vector)
+evaluate_query('Officer Bob', bob_vector, 'Bob from alternate camera angle')
+print('\n[Scenario 2: Unenrolled Trespasser in Similar Uniform]')
+for i, stranger in enumerate(['Unknown_01', 'Unknown_02'], start=1):
+    stranger_vector = rng.randn(embedding_dim).astype(np.float32)
+    stranger_vector /= np.linalg.norm(stranger_vector)
+    evaluate_query(stranger, stranger_vector, f'Unknown individual in similar attire ({i})')
+print('\n[Scenario 3: Ambiguous Candidate Matching Multiple IDs]')
+charlie = enrolled_embeddings['Officer Charlie']
+diana = enrolled_embeddings['Officer Diana']
+ambiguous_vector = 0.5 * charlie + 0.5 * diana + 0.03 * rng.randn(embedding_dim).astype(np.float32)
+ambiguous_vector /= np.linalg.norm(ambiguous_vector)
+evaluate_query('Ambiguous Person', ambiguous_vector, 'Contrast margin gate catches tied identity match')
+print('\n' + '-' * 68)
+print(f'Gallery verification complete: {matcher.gallery_matrix.shape[0]} enrolled identities, {matcher.gallery_matrix.shape[1]}-d.')

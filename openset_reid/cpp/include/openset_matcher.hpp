@@ -1,8 +1,3 @@
-/**
- * Open-Set Person Re-Identification C++ Matcher Engine.
- * High-performance, SIMD-friendly matching with contrast margin and EVT rejection.
- */
-
 #ifndef OPENSET_MATCHER_HPP
 #define OPENSET_MATCHER_HPP
 
@@ -31,14 +26,11 @@ public:
                       float evt_threshold = 0.40f,
                       int embedding_dim = 512);
 
-    // Dynamic enrollment
     void enroll(const std::string& identity, const std::vector<float>& embedding);
     void clearGallery();
 
-    // Matching
     MatchDecisionCPP match(const std::vector<float>& query_embedding);
 
-    // Weibull EVT parameter configuration
     void setWeibullParameters(float shape, float scale);
 
     size_t getGallerySize() const { return gallery_identities_.size(); }
@@ -50,16 +42,15 @@ private:
     int embedding_dim_;
 
     std::vector<std::string> gallery_identities_;
-    std::vector<float> gallery_matrix_; // Flattened [N * D]
+    std::vector<float> gallery_matrix_;
 
-    // EVT Weibull params: P(X <= x) = 1 - exp(-(x/scale)^shape)
     float weibull_shape_;
     float weibull_scale_;
     bool has_weibull_;
 
-    // Fast dot product
     float dotProduct(const float* a, const float* b, int dim) const;
     void normalize(std::vector<float>& vec) const;
 };
 
-#endif // OPENSET_MATCHER_HPP
+#endif
+

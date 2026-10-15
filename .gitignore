@@ -9,6 +9,7 @@ build/
 .eggs/
 
 # Model checkpoints & data
+
 experiments/
 data/
 *.pth

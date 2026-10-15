@@ -1,7 +1,3 @@
-/**
- * OpenSetMatcherCPP implementation.
- */
-
 #include "openset_matcher.hpp"
 
 OpenSetMatcherCPP::OpenSetMatcherCPP(float score_threshold,
@@ -77,14 +73,12 @@ MatchDecisionCPP OpenSetMatcherCPP::match(const std::vector<float>& query_embedd
     std::vector<float> q = query_embedding;
     normalize(q);
 
-    // Compute all cosine similarities
     std::vector<float> similarities(num_gal);
     for (size_t i = 0; i < num_gal; ++i) {
         const float* gal_ptr = &gallery_matrix_[i * embedding_dim_];
         similarities[i] = dotProduct(gal_ptr, q.data(), embedding_dim_);
     }
 
-    // Find top match
     int best_idx = 0;
     float best_score = similarities[0];
     for (size_t i = 1; i < num_gal; ++i) {
@@ -97,7 +91,6 @@ MatchDecisionCPP OpenSetMatcherCPP::match(const std::vector<float>& query_embedd
     std::string top_id = gallery_identities_[best_idx];
     decision.raw_score = best_score;
 
-    // Find second best match of a DIFFERENT identity
     float second_score = -1.0f;
     int second_idx = -1;
     for (size_t i = 0; i < num_gal; ++i) {
@@ -115,18 +108,15 @@ MatchDecisionCPP OpenSetMatcherCPP::match(const std::vector<float>& query_embedd
         decision.second_identity = gallery_identities_[second_idx];
     }
 
-    // Calibrated probability approximation (Platt sigmoid)
     float logit = (best_score - 0.65f) / 0.08f;
     decision.confidence = 1.0f / (1.0f + std::exp(-logit));
 
-    // EVT Outlier score
     if (has_weibull_) {
         float dist = std::sqrt(std::max(2.0f - 2.0f * best_score, 0.0f));
         float p_val = 1.0f - std::exp(-std::pow(dist / weibull_scale_, weibull_shape_));
         decision.evt_tail_score = std::max(0.0f, std::min(1.0f, 1.0f - p_val));
     }
 
-    // Rejection checks
     if (best_score < score_threshold_) {
         decision.rejection_reason = "Score below threshold";
         return decision;
@@ -146,3 +136,4 @@ MatchDecisionCPP OpenSetMatcherCPP::match(const std::vector<float>& query_embedd
     decision.matched_identity = top_id;
     return decision;
 }
+

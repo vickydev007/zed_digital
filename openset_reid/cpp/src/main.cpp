@@ -1,7 +1,3 @@
-/**
- * C++ Open-Set Matcher Standalone Benchmark and Unit Verification.
- */
-
 #include "openset_matcher.hpp"
 #include <chrono>
 #include <random>
@@ -30,7 +26,6 @@ int main() {
     }
     std::cout << "Gallery enrollment complete. Gallery size: " << matcher.getGallerySize() << std::endl;
 
-    // Benchmark matching latency
     std::vector<float> test_query(EMBEDDING_DIM);
     for (int d = 0; d < EMBEDDING_DIM; ++d) test_query[d] = dist(rng);
 
@@ -39,7 +34,7 @@ int main() {
     int rejected_count = 0;
 
     for (int q = 0; q < NUM_QUERIES; ++q) {
-        // Generate query
+
         for (int d = 0; d < EMBEDDING_DIM; ++d) test_query[d] = dist(rng);
         MatchDecisionCPP dec = matcher.match(test_query);
         if (dec.is_accepted) accepted_count++;
@@ -60,3 +55,4 @@ int main() {
 
     return 0;
 }
+
