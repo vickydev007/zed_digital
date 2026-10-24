@@ -1,0 +1,21 @@
+{
+  "video_file": "data/test_synthetic.mp4",
+  "output_video": "data/test_synthetic_annotated.mp4",
+  "total_frames_processed": 30,
+  "video_resolution": [
+    640,
+    360
+  ],
+  "elapsed_seconds": 2.83,
+  "average_fps": 10.61,
+  "threshold_tau": 0.7124,
+  "contrast_margin": 0.05,
+  "total_tracks": 0,
+  "categories": {
+    "OFFICIAL_WORKER": 0,
+    "NEW_PERSON": 0,
+    "PREVIOUSLY_ENROLLED": 0,
+    "UNKNOWN": 0
+  },
+  "tracks": []
+}

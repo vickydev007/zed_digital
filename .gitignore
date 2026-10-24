@@ -10,7 +10,8 @@ build/
 
 # Model checkpoints & data
 
-experiments/
+experiments/*
+!experiments/reports/
 data/
 *.pth
 *.pt
