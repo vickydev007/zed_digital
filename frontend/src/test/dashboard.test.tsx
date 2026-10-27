@@ -32,10 +32,10 @@ describe('Dashboard Component & Category Precedence', () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText('12')).toBeInTheDocument(); // active_workers_present
-      expect(screen.getByText('5')).toBeInTheDocument(); // qualifying_candidates_count
-      expect(screen.getByText('24')).toBeInTheDocument(); // repeat_passages_count
-      expect(screen.getByText('8')).toBeInTheDocument(); // unknown_observations_count
+      expect(screen.getByText('12')).toBeInTheDocument();
+      expect(screen.getByText('5')).toBeInTheDocument();
+      expect(screen.getByText('24')).toBeInTheDocument();
+      expect(screen.getByText('8')).toBeInTheDocument();
     });
 
     expect(screen.getByText('Active Official Workers')).toBeInTheDocument();

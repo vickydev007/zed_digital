@@ -197,9 +197,8 @@ def enroll_worker_image(
     db.add(enroll_img)
     db.flush()
     
-    img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
     engine = get_reid_engine()
-    emb = engine.extract_embedding(img_rgb)
+    emb = engine.extract_embedding(img_bgr)
     emb_vector = [round(float(v), 6) for v in emb.tolist()]
     
     person_emb = PersonEmbedding(

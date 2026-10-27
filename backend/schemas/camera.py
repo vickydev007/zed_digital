@@ -36,3 +36,49 @@ class CameraActionResponse(BaseModel):
     name: str
     status: str
     action_performed: str
+
+class CameraRuntimeStatusResponse(BaseModel):
+    camera_id: str
+    tenant_id: str
+    status: str
+    received_fps: float
+    processed_fps: float
+    received_frames: int
+    processed_frames: int
+    active_tracks: int
+    reconnect_count: int
+    last_frame_time: Optional[str] = None
+    last_error: Optional[str] = None
+    uptime_seconds: float
+    consumer_count: int
+    sanitized_url: Optional[str] = None
+    persistence_stats: Optional[dict] = None
+    latency_summary: Optional[dict] = None
+    policy_id: Optional[str] = None
+    operating_tau: Optional[float] = None
+    operating_margin: Optional[float] = None
+    camera_profile: Optional[str] = None
+
+class CameraTestConnectionRequest(BaseModel):
+    rtsp_url: str
+
+class CameraTestConnectionResponse(BaseModel):
+    success: bool
+    width: Optional[int] = 0
+    height: Optional[int] = 0
+    fps: Optional[float] = 0.0
+    message: Optional[str] = None
+    error: Optional[str] = None
+
+class CameraPreviewTokenResponse(BaseModel):
+    preview_token: str
+    expires_in_seconds: int = 120
+    camera_id: str
+    tenant_id: str
+
+class ClientLatencyReportRequest(BaseModel):
+    frame_idx: int
+    capture_timestamp: float
+    display_timestamp: float
+    display_latency_ms: float
+

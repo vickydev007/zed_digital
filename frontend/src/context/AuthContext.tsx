@@ -43,7 +43,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       localStorage.removeItem(TOKEN_KEY);
       localStorage.removeItem(TENANT_KEY);
     } catch {
-      // ignore
     }
   }, []);
 
@@ -56,7 +55,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         try {
           localStorage.setItem(TENANT_KEY, target.tenant_id);
         } catch {
-          // ignore
         }
       }
     },
@@ -151,7 +149,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           localStorage.setItem(TENANT_KEY, defaultTenantId);
         }
       } catch {
-        // ignore
       }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Authentication failed';

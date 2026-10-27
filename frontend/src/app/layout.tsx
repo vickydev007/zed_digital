@@ -6,6 +6,11 @@ export const metadata: Metadata = {
   title: 'Zed Digital — Open-Set Person Re-Identification Platform',
   description:
     'Enterprise Open-Set Person Re-Identification platform with decoupled identity and passage tracking, 4-category visual hierarchy, and CCTV analytics.',
+  icons: {
+    icon: '/icon.svg',
+    shortcut: '/favicon.ico',
+    apple: '/icon.svg',
+  },
 };
 
 export default function RootLayout({

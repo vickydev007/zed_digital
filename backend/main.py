@@ -22,6 +22,57 @@ from backend.api.v1.dashboard import router as dashboard_router
 from backend.api.v1.evaluation import router as evaluation_router
 from backend.api.v1.media import router as media_router
 
+from sqlalchemy import text, select
+from sqlalchemy.orm import Session
+from backend.models.video import VideoJob
+
+def ensure_schema_columns():
+    with engine.connect() as conn:
+        try:
+            res = conn.execute(text("PRAGMA table_info(video_jobs)")).fetchall()
+            existing_cols = {r[1] for r in res}
+            if 'processed_frames' not in existing_cols:
+                conn.execute(text("ALTER TABLE video_jobs ADD COLUMN processed_frames INTEGER DEFAULT 0"))
+            if 'total_frames' not in existing_cols:
+                conn.execute(text("ALTER TABLE video_jobs ADD COLUMN total_frames INTEGER DEFAULT 0"))
+
+            va_res = conn.execute(text("PRAGMA table_info(video_assets)")).fetchall()
+            va_cols = {r[1] for r in va_res}
+            if 'fps' not in va_cols:
+                conn.execute(text("ALTER TABLE video_assets ADD COLUMN fps REAL DEFAULT 25.0"))
+            if 'frame_count' not in va_cols:
+                conn.execute(text("ALTER TABLE video_assets ADD COLUMN frame_count INTEGER DEFAULT 0"))
+            if 'resolution_width' not in va_cols:
+                conn.execute(text("ALTER TABLE video_assets ADD COLUMN resolution_width INTEGER DEFAULT 0"))
+            if 'resolution_height' not in va_cols:
+                conn.execute(text("ALTER TABLE video_assets ADD COLUMN resolution_height INTEGER DEFAULT 0"))
+
+            pe_res = conn.execute(text("PRAGMA table_info(passage_events)")).fetchall()
+            pe_cols = {r[1] for r in pe_res}
+            if 'policy_id' not in pe_cols:
+                conn.execute(text("ALTER TABLE passage_events ADD COLUMN policy_id VARCHAR(64) DEFAULT 'POL-ALERTING-V1'"))
+
+            md_res = conn.execute(text("PRAGMA table_info(match_decisions)")).fetchall()
+            md_cols = {r[1] for r in md_res}
+            if 'policy_id' not in md_cols:
+                conn.execute(text("ALTER TABLE match_decisions ADD COLUMN policy_id VARCHAR(64) DEFAULT 'POL-ALERTING-V1'"))
+            conn.commit()
+        except Exception:
+            pass
+
+def backfill_completed_job_frames(db: Session):
+    try:
+        jobs = db.execute(select(VideoJob).where(VideoJob.status == 'COMPLETED')).scalars().all()
+        for j in jobs:
+            if (not j.processed_frames or not j.total_frames) and j.summary_json:
+                tf = j.summary_json.get('total_frames_processed', 0)
+                if tf:
+                    j.processed_frames = tf
+                    j.total_frames = tf
+        db.commit()
+    except Exception:
+        db.rollback()
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     os.makedirs(settings.UPLOAD_DIR, exist_ok=True)
@@ -31,16 +82,24 @@ async def lifespan(app: FastAPI):
     os.makedirs('experiments/reports', exist_ok=True)
 
     Base.metadata.create_all(bind=engine)
+    ensure_schema_columns()
 
     db = SessionLocal()
     try:
         recover_orphaned_jobs(db)
         user, tenant = seed_default_admin(db)
         seed_empirical_experiment_run(db, tenant.id)
+        backfill_completed_job_frames(db)
     finally:
         db.close()
 
     yield
+
+    try:
+        from backend.services.camera_streamer import stream_manager
+        stream_manager.shutdown_all()
+    except Exception:
+        pass
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
@@ -75,8 +134,20 @@ def health_check():
         'status': 'healthy',
         'project': settings.PROJECT_NAME,
         'version': '3.5.0',
+        'active_policy_id': settings.ACTIVE_POLICY_ID,
         'operating_tau': settings.DEFAULT_SCORE_THRESHOLD,
-        'operating_margin': settings.DEFAULT_CONTRAST_MARGIN
+        'operating_margin': settings.DEFAULT_CONTRAST_MARGIN,
+        'operating_min_obs': settings.DEFAULT_MIN_OBSERVATIONS
+    }
+
+@app.get('/policies', tags=['Policies'])
+def get_operational_policies():
+    from openset_reid.open_set.policies import list_policies, get_policy
+    active = get_policy(settings.ACTIVE_POLICY_ID)
+    return {
+        'active_policy_id': settings.ACTIVE_POLICY_ID,
+        'active_policy': active.to_dict(),
+        'all_policies': list_policies()
     }
 
 @app.get('/', tags=['Root'])
@@ -85,5 +156,7 @@ def root():
         'message': 'Open-Set Person Re-Identification Platform Backend API',
         'docs_url': '/docs',
         'openapi_url': '/openapi.json',
-        'api_version': 'v1'
+        'api_version': 'v1',
+        'active_policy_id': settings.ACTIVE_POLICY_ID
     }
+

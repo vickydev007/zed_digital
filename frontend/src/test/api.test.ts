@@ -66,7 +66,6 @@ describe('Centralized Typed API Client', () => {
     try {
       await api.dashboard.getStats();
     } catch {
-      // expected error
     }
 
     expect(expiredEventFired).toBe(true);

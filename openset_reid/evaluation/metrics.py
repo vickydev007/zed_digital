@@ -1,6 +1,20 @@
+import math
 import numpy as np
 from typing import Dict, List, Tuple, Optional, Union
 from sklearn.metrics import roc_curve, auc, brier_score_loss
+
+def wilson_score_interval(successes: int, total: int, confidence: float = 0.95) -> Tuple[float, float]:
+    if total == 0:
+        return (0.0, 0.0)
+    z = 1.95996
+    p = successes / total
+    denom = 1 + z**2 / total
+    centre = (p + z**2 / (2 * total)) / denom
+    spread = z * math.sqrt(p * (1 - p) / total + z**2 / (4 * total**2)) / denom
+    lower = max(0.0, centre - spread)
+    upper = min(1.0, centre + spread)
+    return (round(lower, 4), round(upper, 4))
+
 
 class OpenSetEvaluationMetrics:
 

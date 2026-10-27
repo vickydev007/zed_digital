@@ -3,13 +3,14 @@ import sys
 import time
 import json
 from enum import Enum
-from typing import Dict, List, Tuple, Optional, Any
+from typing import Dict, List, Tuple, Optional, Any, Callable
 import cv2
 import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 from openset_reid.deployment.onnx_inference import ONNXReIDEngine
 from openset_reid.open_set.calibrator import OpenSetMatcher
+from openset_reid.sensors.camera_profiles import get_camera_profile, CameraSensorProfile
 
 try:
     import torch
@@ -53,13 +54,29 @@ CATEGORY_COLORS_BGR = {
 
 class OfflineVideoAnalyzer:
 
-    def __init__(self, onnx_model_path: str = 'experiments/deployment/openset_reid.onnx', score_threshold: float = 0.7124, contrast_margin: float = 0.05, quality_min_h: int = 28, quality_min_w: int = 12, quality_min_blur: float = 30.0, device: str = 'auto'):
+    def __init__(
+        self,
+        onnx_model_path: str = 'experiments/deployment/openset_reid_v5.onnx',
+        score_threshold: float = 0.85,
+        contrast_margin: float = 0.10,
+        min_observations: int = 3,
+        policy_id: str = 'POL-ALERTING-V1',
+        quality_min_h: int = 28,
+        quality_min_w: int = 12,
+        quality_min_blur: float = 30.0,
+        device: str = 'auto',
+        camera_id: Optional[str] = None,
+        camera_profile: Optional[CameraSensorProfile] = None
+    ):
         self.onnx_model_path = onnx_model_path
         self.score_threshold = float(score_threshold)
         self.contrast_margin = float(contrast_margin)
+        self.min_observations = int(min_observations)
+        self.policy_id = str(policy_id)
         self.quality_min_h = int(quality_min_h)
         self.quality_min_w = int(quality_min_w)
         self.quality_min_blur = float(quality_min_blur)
+        self.camera_profile = camera_profile or get_camera_profile(camera_id)
         
         self.engine = ONNXReIDEngine(onnx_model_path)
         self.matcher = OpenSetMatcher(score_threshold=self.score_threshold, contrast_margin=self.contrast_margin)
@@ -84,9 +101,9 @@ class OfflineVideoAnalyzer:
         self.track_id_counter = 0
         self.candidate_id_counter = 0
 
-    def enroll_worker(self, worker_id: str, person_crop_rgb: np.ndarray) -> bool:
+    def enroll_worker(self, worker_id: str, person_crop_bgr: np.ndarray) -> bool:
         try:
-            emb = self.engine.extract_embedding(person_crop_rgb)
+            emb = self.engine.extract_embedding(person_crop_bgr)
             self.matcher.enroll(worker_id, emb)
             return True
         except Exception:
@@ -105,8 +122,7 @@ class OfflineVideoAnalyzer:
                 img_path = os.path.join(gallery_dir, fname)
                 bgr = cv2.imread(img_path)
                 if bgr is not None:
-                    rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
-                    if self.enroll_worker(worker_id, rgb):
+                    if self.enroll_worker(worker_id, bgr):
                         count += 1
         return count
 
@@ -130,18 +146,17 @@ class OfflineVideoAnalyzer:
         boxes: List[Tuple[int, int, int, int]] = []
         if self.detector is not None:
             det_w, det_h = 640, 360
-            small = cv2.resize(frame_bgr, (det_w, det_h))
+            small = cv2.resize(frame_bgr, (det_w, det_h), interpolation=cv2.INTER_LINEAR)
             small_rgb = cv2.cvtColor(small, cv2.COLOR_BGR2RGB)
-            tensor = (torch.from_numpy(small_rgb).permute(2, 0, 1).float() / 255.0).unsqueeze(0).to(self.device)
+            t_uint8 = torch.from_numpy(small_rgb).to(self.device, non_blocking=True)
+            tensor = t_uint8.permute(2, 0, 1).float().div_(255.0).unsqueeze(0)
             with torch.no_grad():
                 preds = self.detector(tensor)[0]
-            scores = preds['scores'].cpu().numpy()
-            labels = preds['labels'].cpu().numpy()
-            raw_boxes = preds['boxes'].cpu().numpy()
-            mask = (labels == 1) & (scores > 0.52)
+            mask = (preds['labels'] == 1) & (preds['scores'] > 0.52)
+            raw_boxes = preds['boxes'][mask].cpu().numpy()
             scale_x = w / float(det_w)
             scale_y = h / float(det_h)
-            for rb in raw_boxes[mask]:
+            for rb in raw_boxes:
                 x1 = max(0, int(rb[0] * scale_x))
                 y1 = max(0, int(rb[1] * scale_y))
                 x2 = min(w, int(rb[2] * scale_x))
@@ -180,10 +195,18 @@ class OfflineVideoAnalyzer:
         else:
             return IdentityStatus.UNKNOWN, dec.matched_identity, s1, s2, margin, dec.rejection_reason
 
-    def update_tracks(self, frame_bgr: np.ndarray, frame_rgb: np.ndarray, detected_boxes: List[Tuple[int, int, int, int]], frame_idx: int):
+    def update_tracks(self, frame_bgr: np.ndarray, frame_rgb: Any = None, detected_boxes: Any = None, frame_idx: int = 0):
+        if isinstance(frame_rgb, list) and (detected_boxes is None or isinstance(detected_boxes, int)):
+            frame_idx = detected_boxes if isinstance(detected_boxes, int) else 0
+            boxes_to_use = frame_rgb
+        elif isinstance(detected_boxes, list):
+            boxes_to_use = detected_boxes
+        else:
+            boxes_to_use = []
+
         h, w = frame_bgr.shape[:2]
         updated: List[Dict[str, Any]] = []
-        unmatched = list(detected_boxes)
+        unmatched = list(boxes_to_use)
 
         for trk in self.active_tracks:
             tx1, ty1, tbw, tbh = trk['box']
@@ -223,16 +246,40 @@ class OfflineVideoAnalyzer:
                         trk['representative_blur'] = blur_v
 
                 trk['frames_since_reid'] += 1
-                if trk['frames_since_reid'] >= 20 and crop_bgr.shape[0] >= self.quality_min_h:
-                    crop_rgb = frame_rgb[max(0, y):min(h, y + bh), max(0, x):min(w, x + bw)]
-                    q_ok, _, _ = self.assess_crop_quality(crop_bgr)
+                if trk['frames_since_reid'] >= 5 and crop_bgr.shape[0] >= self.quality_min_h:
+                    q_ok, _, q_score = self.assess_crop_quality(crop_bgr)
                     if q_ok:
                         try:
-                            emb = self.engine.extract_embedding(crop_rgb)
-                            trk['embedding'] = emb
-                            id_status, best_id, s1, s2, margin, reason = self.match_embedding_to_gallery(emb)
-                            trk['identity_status'] = id_status
-                            trk['matched_identity'] = best_id if id_status == IdentityStatus.OFFICIAL_WORKER else None
+                            crop_corr = self.camera_profile.apply_to_crop(crop_bgr)
+                            emb = self.engine.extract_embedding(crop_corr)
+                            trk.setdefault('observation_embeddings', []).append(emb)
+                            trk.setdefault('observation_qualities', []).append(q_score)
+                            if len(trk['observation_embeddings']) > 15:
+                                trk['observation_embeddings'].pop(0)
+                                trk['observation_qualities'].pop(0)
+
+                            obs_embs = trk['observation_embeddings']
+                            obs_qs = np.array(trk['observation_qualities'], dtype=np.float32)
+                            obs_qs /= max(float(np.sum(obs_qs)), 1e-6)
+                            pooled_emb = np.sum([w * e for w, e in zip(obs_qs, obs_embs)], axis=0)
+                            pooled_emb /= max(float(np.linalg.norm(pooled_emb)), 1e-6)
+
+                            trk['embedding'] = pooled_emb
+                            id_status, best_id, s1, s2, margin, reason = self.match_embedding_to_gallery(pooled_emb)
+                            
+                            if len(obs_embs) < self.min_observations and id_status == IdentityStatus.OFFICIAL_WORKER:
+                                id_status = IdentityStatus.UNKNOWN
+                                reason = f"Awaiting multi-frame consensus ({len(obs_embs)} < {self.min_observations} observations)"
+
+                            if id_status == IdentityStatus.OFFICIAL_WORKER:
+                                trk['identity_status'] = id_status
+                                trk['matched_identity'] = best_id
+                                trk['candidate_id'] = None
+                            elif trk.get('identity_status') == IdentityStatus.OFFICIAL_WORKER and len(obs_embs) >= self.min_observations + 2:
+                                pass
+                            else:
+                                trk['identity_status'] = id_status
+                                trk['matched_identity'] = None
                             trk['best_score'] = s1
                             trk['runner_up_score'] = s2
                             trk['score_margin'] = margin
@@ -248,16 +295,20 @@ class OfflineVideoAnalyzer:
                     updated.append(trk)
                 else:
                     self.finished_tracks.append(trk)
+                    if len(self.finished_tracks) > 100:
+                        self.finished_tracks = self.finished_tracks[-50:]
 
         for dx1, dy1, dbw, dbh in unmatched:
             crop_bgr = frame_bgr[max(0, dy1):min(h, dy1 + dbh), max(0, dx1):min(w, dx1 + dbw)]
-            crop_rgb = frame_rgb[max(0, dy1):min(h, dy1 + dbh), max(0, dx1):min(w, dx1 + dbw)]
             if crop_bgr.shape[0] < self.quality_min_h or crop_bgr.shape[1] < self.quality_min_w:
                 continue
 
             q_ok, blur_v, q_score = self.assess_crop_quality(crop_bgr)
+            if not q_ok:
+                continue
             try:
-                emb = self.engine.extract_embedding(crop_rgb)
+                crop_corr = self.camera_profile.apply_to_crop(crop_bgr)
+                emb = self.engine.extract_embedding(crop_corr)
             except Exception:
                 continue
 
@@ -265,6 +316,10 @@ class OfflineVideoAnalyzer:
             
             self.track_id_counter += 1
             cur_track_id = self.track_id_counter
+
+            if self.min_observations > 1 and id_status == IdentityStatus.OFFICIAL_WORKER:
+                id_status = IdentityStatus.UNKNOWN
+                reason = f"Awaiting multi-frame consensus (1 < {self.min_observations} observations)"
 
             if id_status == IdentityStatus.OFFICIAL_WORKER:
                 prev_visits = self.worker_passage_counts.get(best_id, 0)
@@ -314,6 +369,8 @@ class OfflineVideoAnalyzer:
                 'candidate_id': candidate_id,
                 'box': (dx1, dy1, dbw, dbh),
                 'embedding': emb,
+                'observation_embeddings': [emb],
+                'observation_qualities': [q_score],
                 'identity_status': id_status,
                 'passage_status': passage_st,
                 'matched_identity': best_id if id_status == IdentityStatus.OFFICIAL_WORKER else None,
@@ -388,15 +445,15 @@ class OfflineVideoAnalyzer:
         
         hud_title = 'OFFLINE RE-ID PIPELINE | 4-CATEGORY PERSON MONITOR'
         hud_stats = f'Active: {len(self.active_tracks)} | Workers: {counts[PersonCategory.OFFICIAL_WORKER]} | Repeat: {counts[PersonCategory.PREVIOUSLY_ENROLLED]} | New: {counts[PersonCategory.NEW_PERSON]} | Unknown: {counts[PersonCategory.UNKNOWN]}'
-        hud_meta = f'tau={self.score_threshold:.3f} | {fps:.1f} FPS'
+        hud_meta = f'{self.policy_id} | tau={self.score_threshold:.2f} | k>={self.min_observations} | {fps:.1f} FPS'
         
         cv2.putText(frame_bgr, hud_title, (16, 26), cv2.FONT_HERSHEY_SIMPLEX, 0.44, (240, 244, 255), 1, cv2.LINE_AA)
-        cv2.putText(frame_bgr, hud_stats, (int(w * 0.38), 26), cv2.FONT_HERSHEY_SIMPLEX, 0.40, (100, 220, 255), 1, cv2.LINE_AA)
-        cv2.putText(frame_bgr, hud_meta, (w - 180, 26), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (68, 207, 108), 1, cv2.LINE_AA)
+        cv2.putText(frame_bgr, hud_stats, (int(w * 0.35), 26), cv2.FONT_HERSHEY_SIMPLEX, 0.40, (100, 220, 255), 1, cv2.LINE_AA)
+        cv2.putText(frame_bgr, hud_meta, (w - 240, 26), cv2.FONT_HERSHEY_SIMPLEX, 0.40, (68, 207, 108), 1, cv2.LINE_AA)
 
         return frame_bgr
 
-    def analyze_video(self, video_path: str, output_video_path: Optional[str] = None, output_crops_dir: Optional[str] = None, output_json_path: Optional[str] = None, max_frames: Optional[int] = None, auto_enroll_lead_worker: bool = True) -> Dict[str, Any]:
+    def analyze_video(self, video_path: str, output_video_path: Optional[str] = None, output_crops_dir: Optional[str] = None, output_json_path: Optional[str] = None, max_frames: Optional[int] = None, auto_enroll_lead_worker: bool = True, progress_callback: Optional[Callable[[int, int], None]] = None, is_cancelled_fn: Optional[Callable[[], bool]] = None) -> Dict[str, Any]:
         if not os.path.exists(video_path):
             raise FileNotFoundError(f"Video file '{video_path}' not found.")
 
@@ -434,6 +491,8 @@ class OfflineVideoAnalyzer:
         fps = 0.0
 
         while True:
+            if is_cancelled_fn and is_cancelled_fn():
+                break
             ret, frame = cap.read()
             if not ret:
                 break
@@ -452,6 +511,12 @@ class OfflineVideoAnalyzer:
             annotated_frame = self.render_hud_and_boxes(frame, frame_idx, fps)
             if writer:
                 writer.write(annotated_frame)
+
+            if progress_callback and (frame_idx % 10 == 0 or frame_idx == total_video_frames):
+                try:
+                    progress_callback(frame_idx, total_video_frames)
+                except Exception:
+                    pass
 
             if max_frames and frame_idx >= max_frames:
                 break
@@ -510,8 +575,10 @@ class OfflineVideoAnalyzer:
             'video_resolution': [w, h],
             'elapsed_seconds': round(total_elapsed, 2),
             'average_fps': round(frame_idx / max(1e-05, total_elapsed), 2),
+            'policy_id': self.policy_id,
             'threshold_tau': self.score_threshold,
             'contrast_margin': self.contrast_margin,
+            'min_observations': self.min_observations,
             'total_tracks': len(all_tracks),
             'categories': category_tallies,
             'tracks': track_records

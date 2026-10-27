@@ -53,6 +53,8 @@ def get_job_progress(
         id=job.id,
         status=job.status,
         progress_percent=job.progress_percent,
+        processed_frames=job.processed_frames or 0,
+        total_frames=job.total_frames or 0,
         completed_at=job.completed_at,
         error_details=job.error_details
     )

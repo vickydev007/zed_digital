@@ -92,7 +92,9 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
               color: '#fff',
             }}
           >
-            <ShieldAlert size={22} />
+            <svg viewBox="0 0 64 64" width="22" height="22" fill="#ffffff">
+              <path d="M14 14 L50 14 L50 23 L26 43 L50 43 L50 51 L14 51 L14 42 L38 22 L14 22 Z" />
+            </svg>
           </div>
           <div>
             <h1 style={{ fontSize: '15px', fontWeight: 700, letterSpacing: '0.4px' }}>Zed Digital</h1>

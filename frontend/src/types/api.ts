@@ -66,6 +66,7 @@ export interface PassageEvent {
   event_timestamp: string;
   is_reviewed: boolean;
   created_at: string;
+  event_source?: 'LIVE_CAMERA' | 'RECORDED_VIDEO';
 }
 
 export interface PresenceSession {
@@ -89,13 +90,91 @@ export interface Camera {
   name: string;
   location?: string | null;
   is_active: boolean;
-  status: 'ONLINE' | 'OFFLINE' | 'DEGRADED';
+  status: 'ONLINE' | 'OFFLINE' | 'DEGRADED' | 'CONNECTING' | 'STOPPING' | 'ERROR' | 'AUTH_EXPIRED';
   stream_fps: number;
   last_heartbeat?: string | null;
   has_encrypted_stream: boolean;
   created_at: string;
   updated_at: string;
 }
+
+export interface CameraRuntimeStatus {
+  camera_id: string;
+  tenant_id: string;
+  status: 'ONLINE' | 'OFFLINE' | 'DEGRADED' | 'CONNECTING' | 'STOPPING' | 'ERROR' | 'AUTH_EXPIRED';
+  received_fps: number;
+  processed_fps: number;
+  received_frames: number;
+  processed_frames: number;
+  active_tracks: number;
+  reconnect_count: number;
+  last_frame_time?: string | null;
+  last_error?: string | null;
+  uptime_seconds: number;
+  consumer_count: number;
+  sanitized_url?: string | null;
+  latency_summary?: {
+    frame_age_ms: number;
+    inference_duration_ms: number;
+    persistence_duration_ms: number;
+    jpeg_encode_ms: number;
+    server_pipeline_latency_ms: number;
+  };
+  policy_id?: string;
+  operating_tau?: number;
+  operating_margin?: number;
+  camera_profile?: string;
+}
+
+export interface CameraTestConnectionRequest {
+  rtsp_url: string;
+}
+
+export interface CameraTestConnectionResponse {
+  success: boolean;
+  width?: number;
+  height?: number;
+  fps?: number;
+  message?: string | null;
+  error?: string | null;
+}
+
+export interface CameraPreviewTokenResponse {
+  preview_token: string;
+  expires_in_seconds: number;
+  camera_id: string;
+  tenant_id: string;
+}
+
+export interface LatencyMetricStat {
+  count: number;
+  median_ms: number | null;
+  p95_ms: number | null;
+  p99_ms: number | null;
+  min_ms: number | null;
+  max_ms: number | null;
+}
+
+export interface CameraLatencyMetricsResponse {
+  camera_id: string;
+  total_server_samples: number;
+  total_client_samples: number;
+  frame_age: LatencyMetricStat;
+  inference_duration: LatencyMetricStat;
+  persistence_duration: LatencyMetricStat;
+  jpeg_encode: LatencyMetricStat;
+  server_pipeline_latency: LatencyMetricStat;
+  actual_browser_display_latency: LatencyMetricStat;
+  definitions?: Record<string, string>;
+}
+
+export interface ClientLatencyReportRequest {
+  frame_idx: number;
+  capture_timestamp: number;
+  display_timestamp: number;
+  display_latency_ms: number;
+}
+
 
 export interface CameraCreateRequest {
   name: string;

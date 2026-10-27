@@ -88,7 +88,9 @@ export default function LoginPage() {
               boxShadow: '0 0 25px rgba(59, 130, 246, 0.5)',
             }}
           >
-            <ShieldCheck size={32} />
+            <svg viewBox="0 0 64 64" width="32" height="32" fill="#ffffff">
+              <path d="M14 14 L50 14 L50 23 L26 43 L50 43 L50 51 L14 51 L14 42 L38 22 L14 22 Z" />
+            </svg>
           </div>
           <h1 style={{ fontSize: '24px', fontWeight: 800, color: '#fff', letterSpacing: '-0.3px' }}>
             Zed Digital

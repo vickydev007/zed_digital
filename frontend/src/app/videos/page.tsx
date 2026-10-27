@@ -15,10 +15,11 @@ import {
   Clock,
   RefreshCw,
   Sliders,
+  Download,
 } from 'lucide-react';
 
 const MAX_FILE_SIZE_BYTES = 150 * 1024 * 1024;
-const ALLOWED_EXTENSIONS = ['.mp4', '.avi', '.mov', '.mkv'];
+const ALLOWED_EXTENSIONS = ['.mp4', '.avi', '.mov', '.mkv', '.webm'];
 
 export default function VideosPage() {
   const { currentTenant, userRole } = useAuth();
@@ -38,8 +39,8 @@ export default function VideosPage() {
   const [uploadSuccess, setUploadSuccess] = useState<VideoAsset | null>(null);
 
   const [analyzingVideo, setAnalyzingVideo] = useState<VideoAsset | null>(null);
-  const [threshold, setThreshold] = useState<number>(0.7124);
-  const [margin, setMargin] = useState<number>(0.05);
+  const [threshold, setThreshold] = useState<number>(0.85);
+  const [margin, setMargin] = useState<number>(0.10);
   const [saveAnnotatedVideo, setSaveAnnotatedVideo] = useState<boolean>(true);
   const [startingAnalysis, setStartingAnalysis] = useState(false);
 
@@ -86,7 +87,6 @@ export default function VideosPage() {
         const updatedJobs = await api.jobs.list();
         setJobs(updatedJobs);
       } catch {
-        // silent polling failure
       }
     }, 2500);
 
@@ -321,13 +321,13 @@ export default function VideosPage() {
               <form onSubmit={handleUploadSubmit}>
                 <div className="form-group">
                   <label className="form-label" htmlFor="video-file-input">
-                    Select CCTV Video File (.mp4, .avi, .mov, .mkv) *
+                    Select CCTV Video File (.mp4, .avi, .mov, .mkv, .webm) *
                   </label>
                   <input
                     ref={fileInputRef}
                     id="video-file-input"
                     type="file"
-                    accept=".mp4,.avi,.mov,.mkv"
+                    accept=".mp4,.avi,.mov,.mkv,.webm"
                     onChange={handleFileChange}
                     className="form-control"
                     disabled={uploading}
@@ -529,7 +529,7 @@ export default function VideosPage() {
                             </div>
                           </td>
                           <td style={{ fontFamily: 'var(--font-mono)', fontSize: '12px', color: 'var(--text-muted)' }}>
-                            {job.processed_frames} / {job.total_frames || '—'}
+                            {job.processed_frames != null ? job.processed_frames : 0} / {job.total_frames ? job.total_frames : '—'}
                           </td>
                           <td style={{ fontSize: '12px', color: 'var(--text-dim)', whiteSpace: 'nowrap' }}>
                             {new Date(job.created_at).toLocaleTimeString()}
@@ -655,7 +655,7 @@ export default function VideosPage() {
                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', color: 'var(--text-dim)', marginTop: '4px' }}>
                   <span>0.50 (Permissive)</span>
                   <span style={{ color: 'var(--accent-primary)', fontWeight: 700 }}>
-                    Calibrated: 0.7124 | Recommended Secure: 0.7520
+                    Active Default: 0.8500 (POL-ALERTING-V1) | Supervised: 0.7000
                   </span>
                   <span>0.90 (Strict)</span>
                 </div>
@@ -727,12 +727,25 @@ export default function VideosPage() {
                   <span>Streaming authorized video stream from facility storage...</span>
                 </div>
               ) : jobVideoBlobUrl ? (
-                <video
-                  src={jobVideoBlobUrl}
-                  controls
-                  autoPlay
-                  style={{ width: '100%', maxHeight: '520px', borderRadius: 'var(--radius-md)', backgroundColor: '#000' }}
-                />
+                <div>
+                  <video
+                    src={jobVideoBlobUrl}
+                    controls
+                    autoPlay
+                    playsInline
+                    style={{ width: '100%', maxHeight: '520px', borderRadius: 'var(--radius-md)', backgroundColor: '#000' }}
+                  />
+                  <div style={{ marginTop: '12px', display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
+                    <a
+                      href={jobVideoBlobUrl}
+                      download={`reid_job_${playingJobId.slice(0, 8)}_annotated.mp4`}
+                      className="btn btn-secondary"
+                      style={{ fontSize: '12px', padding: '6px 14px', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+                    >
+                      <Download size={14} /> Download Annotated Video
+                    </a>
+                  </div>
+                </div>
               ) : (
                 <div style={{ padding: '40px', textAlign: 'center', color: 'var(--color-unknown)' }}>
                   Failed to load video stream.

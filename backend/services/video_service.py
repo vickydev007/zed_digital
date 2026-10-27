@@ -31,6 +31,15 @@ def save_uploaded_video(
     if file_ext not in allowed_exts:
         raise ValueError(f"Unsupported video format '{file_ext}'. Allowed formats: {allowed_exts}")
 
+    mime_map = {
+        '.mp4': 'video/mp4',
+        '.avi': 'video/x-msvideo',
+        '.mov': 'video/quicktime',
+        '.mkv': 'video/x-matroska',
+        '.webm': 'video/webm'
+    }
+    mime_type = mime_map.get(file_ext, 'video/mp4')
+
     target_dir = os.path.join(settings.UPLOAD_DIR, tenant_id)
     os.makedirs(target_dir, exist_ok=True)
     stored_name = f"{uuid.uuid4()}{file_ext}"
@@ -41,30 +50,48 @@ def save_uploaded_video(
 
     cap = cv2.VideoCapture(stored_path)
     if not cap.isOpened():
-        validation_status = 'INVALID'
-        duration = 0.0
-    else:
-        fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
-        frame_count = cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0
-        w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-        h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-        if frame_count <= 0 or w <= 0 or h <= 0:
-            validation_status = 'INVALID'
-            duration = 0.0
-        else:
-            validation_status = 'VALIDATED'
-            duration = float(frame_count / max(1.0, fps))
-        cap.release()
-    
+        if os.path.exists(stored_path):
+            os.remove(stored_path)
+        raise ValueError(f"Invalid or corrupt video container: unable to open media stream from '{original_filename}'.")
+
+    fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
+    frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+    w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+
+    ret, test_frame = cap.read()
+    cap.release()
+
+    if not ret or test_frame is None or frame_count <= 0 or w <= 0 or h <= 0:
+        if os.path.exists(stored_path):
+            os.remove(stored_path)
+        raise ValueError(f"Corrupt or truncated video file: could not decode video frames from '{original_filename}'.")
+
+    duration = float(frame_count / max(1.0, fps))
+    if duration <= 0.0:
+        if os.path.exists(stored_path):
+            os.remove(stored_path)
+        raise ValueError("Video duration cannot be zero or negative.")
+
+    MAX_VIDEO_DURATION_SECONDS = 3600.0
+    if duration > MAX_VIDEO_DURATION_SECONDS:
+        if os.path.exists(stored_path):
+            os.remove(stored_path)
+        raise ValueError(f"Video duration ({duration:.1f}s) exceeds maximum allowed limit of {MAX_VIDEO_DURATION_SECONDS:.0f} seconds (1 hour).")
+
     asset = VideoAsset(
         tenant_id=tenant_id,
         camera_id=camera_id,
         original_filename=original_filename,
         stored_path=stored_path,
-        mime_type='video/mp4',
+        mime_type=mime_type,
         file_size_bytes=file_size,
         duration_seconds=round(duration, 2),
-        validation_status=validation_status
+        fps=round(float(fps), 2),
+        frame_count=frame_count,
+        resolution_width=w,
+        resolution_height=h,
+        validation_status='VALIDATED'
     )
     db.add(asset)
     db.commit()
@@ -77,7 +104,15 @@ def save_uploaded_video(
         entity_id=asset.id,
         tenant_id=tenant_id,
         user_id=user_id,
-        details={'filename': original_filename, 'size_bytes': file_size, 'status': validation_status}
+        details={
+            'filename': original_filename,
+            'size_bytes': file_size,
+            'status': 'VALIDATED',
+            'resolution': f"{w}x{h}",
+            'duration_seconds': round(duration, 2),
+            'fps': round(float(fps), 2),
+            'frame_count': frame_count
+        }
     )
     return asset
 

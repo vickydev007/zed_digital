@@ -22,6 +22,7 @@ class PassageEvent(Base):
     passage_status = Column(String(32), nullable=False)
     display_category = Column(String(32), nullable=False)
     confidence_score = Column(Float, default=0.0, nullable=False)
+    policy_id = Column(String(64), default='POL-ALERTING-V1', nullable=False)
     crop_path = Column(String(512), nullable=True)
     event_timestamp = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
     is_reviewed = Column(Boolean, default=False, nullable=False)

@@ -9,6 +9,12 @@ import {
   Camera,
   CameraCreateRequest,
   CameraUpdateRequest,
+  CameraRuntimeStatus,
+  CameraTestConnectionRequest,
+  CameraTestConnectionResponse,
+  CameraPreviewTokenResponse,
+  CameraLatencyMetricsResponse,
+  ClientLatencyReportRequest,
   VideoAsset,
   VideoAnalyzeRequest,
   Job,
@@ -89,7 +95,6 @@ async function request<T>(
         errorDetail = String((data as { detail: unknown }).detail);
       }
     } catch {
-      // not json
     }
     throw new ApiError(errorDetail || `HTTP error ${response.status}`, response.status, data);
   }
@@ -122,7 +127,6 @@ export const api = {
           const errData = await res.json();
           if (errData?.detail) errMessage = errData.detail;
         } catch {
-          // ignore
         }
         throw new ApiError(errMessage, res.status);
       }
@@ -235,7 +239,56 @@ export const api = {
     stop: (cameraId: string): Promise<{ id: string; name: string; status: string; action_performed: string }> => {
       return request(`/api/v1/cameras/${cameraId}/stop`, { method: 'POST' });
     },
+
+    getStatus: (cameraId: string): Promise<CameraRuntimeStatus> => {
+      return request<CameraRuntimeStatus>(`/api/v1/cameras/${cameraId}/status`);
+    },
+
+    testConnection: (data: CameraTestConnectionRequest): Promise<CameraTestConnectionResponse> => {
+      return request<CameraTestConnectionResponse>('/api/v1/cameras/test-connection', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+      });
+    },
+
+    getPreviewToken: (cameraId: string): Promise<CameraPreviewTokenResponse> => {
+      return request<CameraPreviewTokenResponse>(`/api/v1/cameras/${cameraId}/preview-token`, {
+        method: 'POST',
+      });
+    },
+
+    revokePreviewToken: (cameraId: string, token: string): Promise<{ status: string; camera_id: string }> => {
+      return request<{ status: string; camera_id: string }>(`/api/v1/cameras/${cameraId}/revoke-token`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token }),
+      });
+    },
+
+    getPreviewUrl: (cameraId: string, scopedToken?: string): string => {
+      const auth = getApiAuth();
+      const params = new URLSearchParams();
+      const tokenToUse = scopedToken || auth.token;
+      if (tokenToUse) params.append('token', tokenToUse);
+      if (auth.tenantId) params.append('tenant_id', auth.tenantId);
+      const q = params.toString() ? `?${params.toString()}` : '';
+      return `${API_BASE_URL}/api/v1/cameras/${cameraId}/preview${q}`;
+    },
+
+    getLatencyMetrics: (cameraId: string): Promise<CameraLatencyMetricsResponse> => {
+      return request<CameraLatencyMetricsResponse>(`/api/v1/cameras/${cameraId}/latency`);
+    },
+
+    reportClientLatency: (cameraId: string, data: ClientLatencyReportRequest): Promise<{ success: boolean; camera_id: string }> => {
+      return request<{ success: boolean; camera_id: string }>(`/api/v1/cameras/${cameraId}/client-latency`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+      });
+    },
   },
+
 
   videos: {
     upload: async (file: File, cameraId?: string): Promise<VideoAsset> => {

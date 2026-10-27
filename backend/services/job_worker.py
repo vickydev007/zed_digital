@@ -86,6 +86,8 @@ def run_job_execution(job_id: str, options: Dict[str, Any]):
         video_path = asset.stored_path
         score_thresh = float(options.get('score_threshold', settings.DEFAULT_SCORE_THRESHOLD))
         margin = float(options.get('contrast_margin', settings.DEFAULT_CONTRAST_MARGIN))
+        min_obs = int(options.get('min_observations', settings.DEFAULT_MIN_OBSERVATIONS))
+        policy_id = str(options.get('policy_id', settings.ACTIVE_POLICY_ID))
         max_frames = options.get('max_frames')
         auto_enroll = bool(options.get('auto_enroll_lead_worker', True))
 
@@ -93,6 +95,8 @@ def run_job_execution(job_id: str, options: Dict[str, Any]):
             onnx_model_path=settings.ONNX_MODEL_PATH,
             score_threshold=score_thresh,
             contrast_margin=margin,
+            min_observations=min_obs,
+            policy_id=policy_id,
             quality_min_h=settings.DEFAULT_QUALITY_MIN_H,
             quality_min_w=settings.DEFAULT_QUALITY_MIN_W,
             quality_min_blur=settings.DEFAULT_QUALITY_MIN_BLUR
@@ -131,14 +135,42 @@ def run_job_execution(job_id: str, options: Dict[str, Any]):
         _finalize_cancelled(job_id)
         return
 
+    last_update_ts = [time.time()]
+
+    def on_progress(processed: int, total: int):
+        if is_job_cancelled(job_id):
+            return
+        now = time.time()
+        if now - last_update_ts[0] < 1.0 and processed < total:
+            return
+        last_update_ts[0] = now
+        pct = 15.0 + 80.0 * (processed / max(1, total))
+        pct = min(95.0, round(pct, 1))
+        pdb = SessionLocal()
+        try:
+            p_stmt = select(VideoJob).where(VideoJob.id == job_id)
+            pj = pdb.execute(p_stmt).scalar_one_or_none()
+            if pj and pj.status == 'RUNNING':
+                pj.progress_percent = pct
+                pj.processed_frames = processed
+                pj.total_frames = total
+                pdb.commit()
+        except Exception:
+            pdb.rollback()
+        finally:
+            pdb.close()
+
     try:
+        save_annotated = bool(options.get('save_annotated_video', True))
         summary = analyzer.analyze_video(
             video_path=video_path,
-            output_video_path=out_video_path,
+            output_video_path=out_video_path if save_annotated else None,
             output_crops_dir=out_crops_dir,
             output_json_path=None,
             max_frames=max_frames,
-            auto_enroll_lead_worker=auto_enroll
+            auto_enroll_lead_worker=auto_enroll,
+            progress_callback=on_progress,
+            is_cancelled_fn=lambda: is_job_cancelled(job_id)
         )
     except Exception as exc:
         _finalize_failed(job_id, str(exc))
@@ -148,7 +180,51 @@ def run_job_execution(job_id: str, options: Dict[str, Any]):
         _finalize_cancelled(job_id)
         return
 
+    if save_annotated:
+        transcode_to_web_h264(out_video_path)
+
     _persist_analysis_results(job_id, tenant_id, summary)
+
+def transcode_to_web_h264(video_path: Optional[str]):
+    if not video_path or not os.path.exists(video_path):
+        return
+    try:
+        import subprocess
+        import imageio_ffmpeg
+        ffmpeg_bin = imageio_ffmpeg.get_ffmpeg_exe()
+        tmp_target = video_path + '.h264.mp4'
+        cmd = [
+            ffmpeg_bin, '-y',
+            '-i', video_path,
+            '-c:v', 'libx264',
+            '-pix_fmt', 'yuv420p',
+            '-movflags', '+faststart',
+            tmp_target
+        ]
+        res = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        if res.returncode == 0 and os.path.exists(tmp_target) and os.path.getsize(tmp_target) > 0:
+            os.replace(tmp_target, video_path)
+    except Exception:
+        pass
+
+def _cleanup_job_artifacts(job: VideoJob):
+    if job.output_video_path and os.path.exists(job.output_video_path):
+        try:
+            os.remove(job.output_video_path)
+        except Exception:
+            pass
+    tmp_h264 = (job.output_video_path or "") + ".h264.mp4"
+    if os.path.exists(tmp_h264):
+        try:
+            os.remove(tmp_h264)
+        except Exception:
+            pass
+    if job.output_crops_dir and os.path.exists(job.output_crops_dir):
+        try:
+            import shutil
+            shutil.rmtree(job.output_crops_dir, ignore_errors=True)
+        except Exception:
+            pass
 
 def _finalize_cancelled(job_id: str):
     db: Session = SessionLocal()
@@ -156,6 +232,7 @@ def _finalize_cancelled(job_id: str):
         stmt = select(VideoJob).where(VideoJob.id == job_id)
         job = db.execute(stmt).scalar_one_or_none()
         if job:
+            _cleanup_job_artifacts(job)
             job.status = 'CANCELLED'
             job.completed_at = datetime.now(timezone.utc)
             db.commit()
@@ -170,6 +247,7 @@ def _finalize_failed(job_id: str, error_message: str):
         stmt = select(VideoJob).where(VideoJob.id == job_id)
         job = db.execute(stmt).scalar_one_or_none()
         if job:
+            _cleanup_job_artifacts(job)
             job.status = 'FAILED'
             job.error_details = error_message[:1000]
             job.completed_at = datetime.now(timezone.utc)
@@ -285,6 +363,7 @@ def _persist_analysis_results(job_id: str, tenant_id: str, summary: Dict[str, An
                 passage_status=pass_status,
                 display_category=disp_cat,
                 confidence_score=t_info.get('best_score', 0.0),
+                policy_id=summary.get('policy_id', settings.ACTIVE_POLICY_ID),
                 crop_path=crop_file,
                 event_timestamp=datetime.now(timezone.utc)
             )
@@ -301,12 +380,13 @@ def _persist_analysis_results(job_id: str, tenant_id: str, summary: Dict[str, An
                 top_candidate_score=t_info.get('best_score', 0.0),
                 runner_up_score=t_info.get('runner_up_score', 0.0),
                 score_margin=t_info.get('score_margin', 0.0),
+                policy_id=summary.get('policy_id', settings.ACTIVE_POLICY_ID),
                 score_threshold=summary.get('threshold_tau', settings.DEFAULT_SCORE_THRESHOLD),
                 contrast_margin=summary.get('contrast_margin', settings.DEFAULT_CONTRAST_MARGIN),
                 decision_category=disp_cat,
                 is_accepted=(id_status == IdentityStatus.OFFICIAL_WORKER.value),
                 rejection_reason=t_info.get('rejection_reason'),
-                model_version='v1.0-onnx'
+                model_version='v5.0-multigranularity-hardmining'
             )
             db.add(decision_record)
 
@@ -329,8 +409,11 @@ def _persist_analysis_results(job_id: str, tenant_id: str, summary: Dict[str, An
                     )
                     db.add(new_sess)
 
+        total_f = summary.get('total_frames_processed', 0)
         job.status = 'COMPLETED'
         job.progress_percent = 100.0
+        job.processed_frames = total_f
+        job.total_frames = total_f
         job.summary_json = summary
         job.completed_at = datetime.now(timezone.utc)
         db.commit()

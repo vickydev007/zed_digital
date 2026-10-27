@@ -1,7 +1,7 @@
 from __future__ import annotations
 from typing import Optional
 from datetime import datetime
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, model_validator, field_serializer
 
 class PassageEventResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -21,6 +21,19 @@ class PassageEventResponse(BaseModel):
     event_timestamp: datetime
     is_reviewed: bool
     created_at: datetime
+    policy_id: Optional[str] = 'POL-ALERTING-V1'
+    event_source: str = 'LIVE_CAMERA'
+
+    @model_validator(mode='after')
+    def compute_event_source(self) -> 'PassageEventResponse':
+        self.event_source = 'RECORDED_VIDEO' if self.video_job_id else 'LIVE_CAMERA'
+        return self
+
+    @field_serializer('crop_path')
+    def serialize_crop_path(self, v: Optional[str]) -> Optional[str]:
+        if v:
+            return f"/api/v1/media/crops/{self.id}"
+        return None
 
 class PresenceSessionResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
